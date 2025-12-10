@@ -81,73 +81,84 @@
             document.getElementById('resultMeaning').textContent = saying.meaning;
             document.getElementById('resultBox').classList.remove('hidden');
         }
-
-        async function handleSearch() {
+     async function handleSearch() {
             const input = document.getElementById('searchInput').value.trim();
             if (!input) return;
 
             const btn = document.getElementById('searchBtn');
             const btnText = document.getElementById('btnText');
             
+            // First try simple keyword search
+            const lowerInput = input.toLowerCase();
+            const simpleMatch = db.find(s => 
+                s.danish.toLowerCase().includes(lowerInput) ||
+                s.meaning.toLowerCase().includes(lowerInput) ||
+                s.english.toLowerCase().includes(lowerInput)
+            );
+            
+            if (simpleMatch) {
+                showResult(simpleMatch);
+                return;
+            }
+            
+            // If no simple match, try AI search
             btn.disabled = true;
             btnText.textContent = 'Thinking...';
             
             try {
-                // Create a comprehensive summary with all sayings
-                const allSayings = db.map((s, i) => `${i + 1}. ${s.danish} (${s.meaning})`).join('\n');
+                // Only send a subset of sayings to avoid token limits
+                const sayingsSummary = db.map(s => `${s.danish}|${s.meaning}`).join('~');
                 
                 const response = await fetch("https://api.anthropic.com/v1/messages", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         model: "claude-sonnet-4-20250514",
-                        max_tokens: 1000,
+                        max_tokens: 500,
                         messages: [{
                             role: "user",
-                            content: `User is searching for: "${input}"
+                            content: `Find best Danish saying match for: "${input}"
 
-This could be:
-- A partial Danish phrase
-- An English description of what they're looking for
-- A concept or situation they want a saying about
-- Keywords related to a saying
+Sayings database (format: danish|meaning):
+${sayingsSummary}
 
-Your task: Find the BEST matching Danish saying from this database and return it.
+Return ONLY this exact JSON (no markdown):
+{"danish": "exact Danish saying from list"}
 
-Database of ${db.length} Danish sayings:
-${allSayings}
-
-Analyze the user's input and find the saying that best matches their intent. Consider:
-- Semantic meaning (what they're trying to express)
-- Keywords and concepts
-- Partial matches in Danish text
-- Similar situations or contexts
-
-Return ONLY this JSON format (no markdown, no explanation):
-{"danish": "exact Danish saying", "english": "literal English translation", "meaning": "actual meaning"}
-
-If absolutely no reasonable match exists:
-{"danish": "${input}", "english": "Not found", "meaning": "No matching saying found. Try different keywords."}`
+Find the saying that best matches the user's query semantically.`
                         }]
                     })
                 });
 
                 const data = await response.json();
+                
+                // Check for API errors
+                if (data.error) {
+                    throw new Error(data.error.message || 'API error');
+                }
+                
                 const text = data.content[0].text.replace(/```json|```/g, '').trim();
                 const parsed = JSON.parse(text);
                 
-                // Find the actual saying in our database to get proper formatting
+                // Find the actual saying in our database
                 const found = db.find(s => s.danish === parsed.danish);
                 if (found) {
                     showResult(found);
                 } else {
-                    showResult(parsed);
+                    // Fallback: show "not found"
+                    showResult({ 
+                        danish: input, 
+                        english: "Not found", 
+                        meaning: "No matching saying found. Try different keywords or a partial Danish phrase." 
+                    });
                 }
             } catch (error) {
+                console.error('Search error:', error);
+                // Show a better error message
                 showResult({ 
                     danish: input, 
-                    english: "Error", 
-                    meaning: "Unable to process. Please try again." 
+                    english: "Search failed", 
+                    meaning: "Try typing a Danish word from the saying (e.g., 'ko', 'isen') or an English keyword (e.g., 'worry', 'calm')." 
                 });
             }
             
